@@ -1,80 +1,86 @@
 #!/bin/sh
 #
-# Phipcomm K2 ImmortalWrt First Boot Initialization Script for Pure AP + KVR Roaming
+# Phicomm K2 ImmortalWrt First Boot Initialization Script for Pure AP + KVR Roaming
 # Location: files/etc/uci-defaults/99-k2-kvr-ap
 #
 
 # 1. Configure Network (Pure AP Mode: Disable DHCP server, set static LAN IP, link upstream gateway & DNS)
-uci set network.lan.ipaddr='192.168.1.253'
-uci set network.lan.netmask='255.255.255.0'
-uci set network.lan.gateway='192.168.1.1'
-uci set network.lan.dns='192.168.1.1 223.5.5.5'
+if [ -f /etc/config/network ]; then
+    uci set network.lan.ipaddr='192.168.1.253'
+    uci set network.lan.netmask='255.255.255.0'
+    uci set network.lan.gateway='192.168.1.1'
+    uci set network.lan.dns='192.168.1.1 223.5.5.5'
+    uci commit network
+fi
+
 # Disable DHCP server on K2 so it acts as a transparent AP bridged to main router
-uci set dhcp.lan.ignore='1'
-uci commit network
-uci commit dhcp
+if [ -f /etc/config/dhcp ]; then
+    uci set dhcp.lan.ignore='1'
+    uci commit dhcp
+fi
 
 # 2. Configure Wireless (2.4G & 5G radio settings with 802.11k/v/r Fast Roaming enabled)
-# Note: wpad-openssl natively supports 802.11r (FT), 802.11k, and 802.11v BSS Transition.
+# Note: wpad-wolfssl / wpad-openssl natively supports 802.11r (FT), 802.11k, and 802.11v BSS Transition.
+if [ -f /etc/config/wireless ]; then
+    # --- 2.4GHz Radio (radio0) ---
+    uci set wireless.radio0.disabled='0'
+    uci set wireless.radio0.channel='1'
+    uci set wireless.radio0.htmode='HT40'
 
-# --- 2.4GHz Radio (radio0) ---
-uci set wireless.radio0.disabled='0'
-uci set wireless.radio0.channel='1'
-uci set wireless.radio0.htmode='HT40'
+    uci set wireless.default_radio0.device='radio0'
+    uci set wireless.default_radio0.mode='ap'
+    uci set wireless.default_radio0.ssid='Home-WiFi'
+    uci set wireless.default_radio0.encryption='psk2+ccmp'
+    uci set wireless.default_radio0.key='12345678'
 
-uci set wireless.default_radio0.device='radio0'
-uci set wireless.default_radio0.mode='ap'
-uci set wireless.default_radio0.ssid='Home-WiFi'
-uci set wireless.default_radio0.encryption='psk2+ccmp'
-uci set wireless.default_radio0.key='12345678'
+    # 802.11r Fast Transition (FT) Settings for 2.4G
+    uci set wireless.default_radio0.ieee80211r='1'
+    uci set wireless.default_radio0.mobility_domain='4f57'
+    uci set wireless.default_radio0.ft_over_ds='0'
+    uci set wireless.default_radio0.ft_psk_generate_local='1'
 
-# 802.11r Fast Transition (FT) Settings for 2.4G
-uci set wireless.default_radio0.ieee80211r='1'
-uci set wireless.default_radio0.mobility_domain='4f57'
-uci set wireless.default_radio0.ft_over_ds='0'
-uci set wireless.default_radio0.ft_psk_generate_local='1'
+    # 802.11k / 802.11v Settings for 2.4G
+    uci set wireless.default_radio0.ieee80211k='1'
+    uci set wireless.default_radio0.ieee80211v='1'
+    uci set wireless.default_radio0.bss_transition='1'
 
-# 802.11k / 802.11v Settings for 2.4G
-uci set wireless.default_radio0.ieee80211k='1'
-uci set wireless.default_radio0.ieee80211v='1'
-uci set wireless.default_radio0.bss_transition='1'
+    # --- 5GHz Radio (radio1) ---
+    uci set wireless.radio1.disabled='0'
+    uci set wireless.radio1.channel='36'
+    uci set wireless.radio1.htmode='VHT80'
 
+    uci set wireless.default_radio1.device='radio1'
+    uci set wireless.default_radio1.mode='ap'
+    uci set wireless.default_radio1.ssid='Home-WiFi'
+    uci set wireless.default_radio1.encryption='psk2+ccmp'
+    uci set wireless.default_radio1.key='12345678'
 
-# --- 5GHz Radio (radio1 - MT7612E on K2P / MT7610/7612 variants if applicable) ---
-uci set wireless.radio1.disabled='0'
-uci set wireless.radio1.channel='36'
-uci set wireless.radio1.htmode='VHT80'
+    # 802.11r Fast Transition (FT) Settings for 5G
+    uci set wireless.default_radio1.ieee80211r='1'
+    uci set wireless.default_radio1.mobility_domain='4f57'
+    uci set wireless.default_radio1.ft_over_ds='0'
+    uci set wireless.default_radio1.ft_psk_generate_local='1'
 
-uci set wireless.default_radio1.device='radio1'
-uci set wireless.default_radio1.mode='ap'
-uci set wireless.default_radio1.ssid='Home-WiFi'
-uci set wireless.default_radio1.encryption='psk2+ccmp'
-uci set wireless.default_radio1.key='12345678'
+    # 802.11k / 802.11v Settings for 5G
+    uci set wireless.default_radio1.ieee80211k='1'
+    uci set wireless.default_radio1.ieee80211v='1'
+    uci set wireless.default_radio1.bss_transition='1'
 
-# 802.11r Fast Transition (FT) Settings for 5G
-uci set wireless.default_radio1.ieee80211r='1'
-uci set wireless.default_radio1.mobility_domain='4f57'
-uci set wireless.default_radio1.ft_over_ds='0'
-uci set wireless.default_radio1.ft_psk_generate_local='1'
-
-# 802.11k / 802.11v Settings for 5G
-uci set wireless.default_radio1.ieee80211k='1'
-uci set wireless.default_radio1.ieee80211v='1'
-uci set wireless.default_radio1.bss_transition='1'
-
-uci commit wireless
+    uci commit wireless
+fi
 
 # 3. Configure usteer (if installed) for intelligent AP client steering
-if command -v usteer >/dev/null 2>&1; then
+if [ -f /etc/config/usteer ]; then
     uci set usteer.@usteer[0].network='lan'
-    uci set usteer.@usteer[0].band_steering='1'
     uci set usteer.@usteer[0].load_balancing_threshold='5'
     uci commit usteer
 fi
 
 # 4. Enable dropbear SSH & LuCI web interface
-uci set dropbear.@dropbear[0].PasswordAuth='on'
-uci set dropbear.@dropbear[0].RootPasswordAuth='on'
-uci commit dropbear
+if [ -f /etc/config/dropbear ]; then
+    uci set dropbear.@dropbear[0].PasswordAuth='on'
+    uci set dropbear.@dropbear[0].RootPasswordAuth='on'
+    uci commit dropbear
+fi
 
 exit 0

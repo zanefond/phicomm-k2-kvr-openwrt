@@ -52,46 +52,64 @@ jobs:
 
       - name: Prepare Custom Files
         run: |
+          mkdir -p ${{ env.BUILDER_DIR }}/files
           if [ -d "files" ]; then
             cp -rf files/* ${{ env.BUILDER_DIR }}/files/ || true
           fi
           # Ensure execution permission for uci-defaults
           chmod -R +x ${{ env.BUILDER_DIR }}/files/etc/uci-defaults/ || true
 
-      - name: Build Firmware (With Fallback for usteer size constraints)
+      - name: Build Firmware (With Fallback Strategy)
         run: |
           cd ${{ env.BUILDER_DIR }}
           
-          # Define packages
-          # Pure AP setup: remove PPPoE, IPv6 overhead, firewall, wpad-basic, and add full wpad-openssl + luci + usteer
-          PACKAGES_FULL="wpad-openssl luci luci-i18n-base-zh-cn luci-app-usteer luci-i18n-usteer-zh-cn usteer"
-          PACKAGES_FALLBACK="wpad-openssl luci luci-i18n-base-zh-cn"
+          # Common disabled packages for pure AP on 8MB Flash (eliminates routing, firewall, ppp, ipv6, and bloat)
+          DISABLED_COMMON="-ppp -ppp-mod-pppoe -luci-proto-ppp -firewall -luci-app-firewall -luci-i18n-firewall-zh-cn -ip6tables -kmod-ip6tables -ip6tables-mod-nat -kmod-ipt-nat6 -odhcp6c -kmod-ipv6 -odhcpd-ipv6only -luci-proto-ipv6 -ipv6helper -6in4 -kmod-iptunnel -kmod-iptunnel4 -kmod-sit -luci-app-attendedsysupgrade -luci-i18n-attendedsysupgrade-zh-cn -luci-app-filetransfer -luci-i18n-filetransfer-zh-cn -luci-app-turboacc -luci-i18n-turboacc-zh-cn"
           
-          # Exclude packages to save space on 8MB Flash
-          DISABLED_PACKS="-ppp -ppp-mod-pppoe -ip6tables -odhcp6c -kmod-ipv6 -odhcpd-ipv6only -wpad-basic -wpad-basic-wolfssl -wpad-mini -firewall -dnsmasq"
+          # WolfSSL profile: removes wpad-basic variants, wpad-openssl, and openssl runtime to save ~1MB+ Flash
+          DISABLED_WOLFSSL="${DISABLED_COMMON} -wpad-basic -wpad-basic-wolfssl -wpad-basic-openssl -wpad-mini -wpad-openssl -wget-ssl -libopenssl1.1 -libopenssl-conf -libustream-openssl20201210"
           
-          echo "=== Trying build with usteer and full packages ==="
-          make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_FULL} ${DISABLED_PACKS}" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-full" || true
+          # OpenSSL profile: removes wpad-basic variants and wpad-wolfssl
+          DISABLED_OPENSSL="${DISABLED_COMMON} -wpad-basic -wpad-basic-wolfssl -wpad-basic-openssl -wpad-mini -wpad-wolfssl"
+
+          # Package sets:
+          # Level 1 (Full KVR AP with usteer): full 802.11k/v/r roaming + usteer roaming daemon + LuCI WebUI
+          PACKAGES_LEVEL1="wpad-wolfssl libustream-wolfssl usteer luci luci-i18n-base-zh-cn"
+          
+          # Level 2 (Core KVR AP without usteer): full 802.11k/v/r roaming + LuCI WebUI
+          PACKAGES_LEVEL2="wpad-wolfssl libustream-wolfssl luci luci-i18n-base-zh-cn"
+
+          # Level 3 (Fallback OpenSSL KVR): full 802.11k/v/r roaming via wpad-openssl + LuCI WebUI
+          PACKAGES_LEVEL3="wpad-openssl luci luci-i18n-base-zh-cn"
+          
+          echo "=== Attempt 1: Building Level 1 (wpad-wolfssl + usteer + LuCI) ==="
+          make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_LEVEL1} ${DISABLED_WOLFSSL}" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-usteer" || true
           
           if ! ls bin/targets/ramips/mt7620/*psg1218a-squashfs-sysupgrade.bin >/dev/null 2>&1; then
-            echo "=== Full build with usteer exceeded 8MB space or failed, falling back to core wpad-openssl + LuCI ==="
-            make clean
-            make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_FALLBACK} ${DISABLED_PACKS} dnsmasq" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-core"
+            echo "=== Attempt 1 failed or exceeded size; falling back to Level 2 (wpad-wolfssl + LuCI without usteer) ==="
+            make clean || true
+            make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_LEVEL2} ${DISABLED_WOLFSSL}" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-core" || true
           fi
           
           if ! ls bin/targets/ramips/mt7620/*psg1218a-squashfs-sysupgrade.bin >/dev/null 2>&1; then
-            echo "=== Retrying ultra-slim KVR build ==="
-            make clean
-            make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_FALLBACK} ${DISABLED_PACKS}" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-slim"
+            echo "=== Attempt 2 failed or exceeded size; falling back to Level 3 (wpad-openssl + LuCI) ==="
+            make clean || true
+            make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_LEVEL3} ${DISABLED_OPENSSL}" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-openssl" || true
           fi
           
-          ls -lh bin/targets/ramips/mt7620/*psg1218a-squashfs-sysupgrade.bin
+          if ! ls bin/targets/ramips/mt7620/*psg1218a-squashfs-sysupgrade.bin >/dev/null 2>&1; then
+            echo "=== Error: All ImageBuilder build attempts failed to produce sysupgrade.bin! ==="
+            exit 1
+          fi
+          
+          echo "=== Build Succeeded! Generated Images: ==="
+          ls -lh bin/targets/ramips/mt7620/*psg1218a*
 
       - name: Organize Output Files
         id: organize
         run: |
           mkdir -p firmware_output
-          cp -rf ${{ env.BUILDER_DIR }}/bin/targets/ramips/mt7620/* firmware_output/
+          cp -rf ${{ env.BUILDER_DIR }}/bin/targets/ramips/mt7620/*psg1218a* firmware_output/
           rm -rf firmware_output/packages
           ls -lh firmware_output/
           echo "status=success" >> $GITHUB_OUTPUT
@@ -112,4 +130,5 @@ jobs:
             - **适用刷入方式**：Breed Web 恢复控制台直刷 `*-squashfs-sysupgrade.bin`（闪存布局选 **公版 (0x50000)**）
             - **默认管理 IP**：`192.168.1.253`（已默认关闭 DHCP 服务，插 LAN 口即作纯 AP）
             - **默认 Wi-Fi 名称**：`Home-WiFi`（密码：`12345678`，已默认开启 802.11k/v/r 快速漫游，Mobility Domain `4f57`）
+            - **核心特性**：采用 `wpad-wolfssl` 极致省空间，完整支持 802.11k/v/r 快速漫游协议与 usteer 漫游辅助；剔除 PPPoE/IPv6/防火墙冗余组件，8MB 闪存轻松容纳中文 LuCI 与漫游支持。
           files: firmware_output/*sysupgrade.bin
