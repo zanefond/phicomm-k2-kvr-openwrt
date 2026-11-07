@@ -1,0 +1,115 @@
+name: Build ImmortalWrt K2 KVR Firmware
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_version:
+        description: 'ImmortalWrt Release Version'
+        default: '21.02.7'
+        required: true
+        type: string
+  push:
+    branches:
+      - main
+      - master
+    paths:
+      - '.github/workflows/build-k2-kvr.yml'
+      - 'files/**'
+
+jobs:
+  build:
+    name: Build K2 Image for Profile ${{ matrix.profile }}
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        profile: [phicomm_psg1218a]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Initialize Environment & Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev libncursesw5-dev \
+            asciidoc bzip2 gawk gettext git libelf-dev libssl-dev python3 python3-pip \
+            rsync unzip zlib1g-dev file wget curl xz-utils zstd
+          df -h
+
+      - name: Download & Extract ImageBuilder
+        env:
+          VERSION: ${{ github.event.inputs.release_version || '21.02.7' }}
+        run: |
+          BUILDER_URL="https://downloads.immortalwrt.org/releases/${VERSION}/targets/ramips/mt7620/immortalwrt-imagebuilder-${VERSION}-ramips-mt7620.Linux-x86_64.tar.xz"
+          echo "Downloading ImageBuilder from: ${BUILDER_URL}"
+          wget -q "${BUILDER_URL}" -O imagebuilder.tar.xz
+          tar -xf imagebuilder.tar.xz
+          cd immortalwrt-imagebuilder-*
+          echo "BUILDER_DIR=$(pwd)" >> $GITHUB_ENV
+
+      - name: Prepare Custom Files
+        run: |
+          if [ -d "files" ]; then
+            cp -rf files/* ${{ env.BUILDER_DIR }}/files/ || true
+          fi
+          # Ensure execution permission for uci-defaults
+          chmod -R +x ${{ env.BUILDER_DIR }}/files/etc/uci-defaults/ || true
+
+      - name: Build Firmware (With Fallback for usteer size constraints)
+        run: |
+          cd ${{ env.BUILDER_DIR }}
+          
+          # Define packages
+          # Pure AP setup: remove PPPoE, IPv6 overhead, firewall, wpad-basic, and add full wpad-openssl + luci + usteer
+          PACKAGES_FULL="wpad-openssl luci luci-i18n-base-zh-cn luci-app-usteer luci-i18n-usteer-zh-cn usteer"
+          PACKAGES_FALLBACK="wpad-openssl luci luci-i18n-base-zh-cn"
+          
+          # Exclude packages to save space on 8MB Flash
+          DISABLED_PACKS="-ppp -ppp-mod-pppoe -ip6tables -odhcp6c -kmod-ipv6 -odhcpd-ipv6only -wpad-basic -wpad-basic-wolfssl -wpad-mini -firewall -dnsmasq"
+          
+          echo "=== Trying build with usteer and full packages ==="
+          make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_FULL} ${DISABLED_PACKS}" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-full" || true
+          
+          if ! ls bin/targets/ramips/mt7620/*psg1218a-squashfs-sysupgrade.bin >/dev/null 2>&1; then
+            echo "=== Full build with usteer exceeded 8MB space or failed, falling back to core wpad-openssl + LuCI ==="
+            make clean
+            make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_FALLBACK} ${DISABLED_PACKS} dnsmasq" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-core"
+          fi
+          
+          if ! ls bin/targets/ramips/mt7620/*psg1218a-squashfs-sysupgrade.bin >/dev/null 2>&1; then
+            echo "=== Retrying ultra-slim KVR build ==="
+            make clean
+            make image PROFILE=phicomm_psg1218a PACKAGES="${PACKAGES_FALLBACK} ${DISABLED_PACKS}" FILES="files" EXTRA_IMAGE_NAME="k2-kvr-slim"
+          fi
+          
+          ls -lh bin/targets/ramips/mt7620/*psg1218a-squashfs-sysupgrade.bin
+
+      - name: Organize Output Files
+        id: organize
+        run: |
+          mkdir -p firmware_output
+          cp -rf ${{ env.BUILDER_DIR }}/bin/targets/ramips/mt7620/* firmware_output/
+          rm -rf firmware_output/packages
+          ls -lh firmware_output/
+          echo "status=success" >> $GITHUB_OUTPUT
+
+      - name: Upload Firmware Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: immortalwrt-21.02-phicomm-k2-kvr
+          path: firmware_output/
+
+      - name: Publish Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v21.02.7-kvr-build-${{ github.run_number }}
+          name: "斐讯 K2 (PSG1218A) ImmortalWrt 21.02.7 KVR 纯 AP 固件 (#${{ github.run_number }})"
+          body: |
+            ### 斐讯 K2 (PSG1218A/B) KVR 纯 AP 专用精简固件
+            - **适用刷入方式**：Breed Web 恢复控制台直刷 `*-squashfs-sysupgrade.bin`（闪存布局选 **公版 (0x50000)**）
+            - **默认管理 IP**：`192.168.1.253`（已默认关闭 DHCP 服务，插 LAN 口即作纯 AP）
+            - **默认 Wi-Fi 名称**：`Home-WiFi`（密码：`12345678`，已默认开启 802.11k/v/r 快速漫游，Mobility Domain `4f57`）
+          files: firmware_output/*sysupgrade.bin
