@@ -67,10 +67,10 @@ jobs:
           DISABLED_COMMON="-ppp -ppp-mod-pppoe -luci-proto-ppp -firewall -luci-app-firewall -luci-i18n-firewall-zh-cn -ip6tables -kmod-ip6tables -ip6tables-mod-nat -kmod-ipt-nat6 -odhcp6c -kmod-ipv6 -odhcpd-ipv6only -luci-proto-ipv6 -ipv6helper -6in4 -kmod-iptunnel -kmod-iptunnel4 -kmod-sit -luci-app-attendedsysupgrade -luci-i18n-attendedsysupgrade-zh-cn -luci-app-filetransfer -luci-i18n-filetransfer-zh-cn -luci-app-turboacc -luci-i18n-turboacc-zh-cn"
           
           # WolfSSL profile: removes wpad-basic variants, wpad-openssl, and openssl runtime to save ~1MB+ Flash
-          DISABLED_WOLFSSL="${DISABLED_COMMON} -wpad-basic -wpad-basic-wolfssl -wpad-basic-openssl -wpad-mini -wpad-openssl -wget-ssl -libopenssl1.1 -libopenssl-conf -libustream-openssl20201210"
+          DISABLED_WOLFSSL="${DISABLED_COMMON} -wpad-basic -wpad-basic-wolfssl -wpad-basic-openssl -wpad-mini -wpad-openssl -wget-ssl -libopenssl1.1 -libopenssl-conf -libustream-openssl -libustream-openssl20201210"
           
           # OpenSSL profile: removes wpad-basic variants and wpad-wolfssl
-          DISABLED_OPENSSL="${DISABLED_COMMON} -wpad-basic -wpad-basic-wolfssl -wpad-basic-openssl -wpad-mini -wpad-wolfssl"
+          DISABLED_OPENSSL="${DISABLED_COMMON} -wpad-basic -wpad-basic-wolfssl -wpad-basic-openssl -wpad-mini -wpad-wolfssl -libustream-wolfssl -libustream-wolfssl20201210"
 
           # Package sets:
           # Level 1 (Full KVR AP with usteer): full 802.11k/v/r roaming + usteer roaming daemon + LuCI WebUI
